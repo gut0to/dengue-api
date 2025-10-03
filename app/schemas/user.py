@@ -1,5 +1,6 @@
-from pydantic import BaseModel, EmailStr
 from typing import Optional
+from pydantic import BaseModel, EmailStr
+from pydantic import ConfigDict
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -10,19 +11,9 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class UserOut(BaseModel):
-    id: int
-    email: str
-    role: str
-    is_active: bool
-    two_factor_enabled: bool
-
-    class Config:
-        from_attributes = True
-
 class Token(BaseModel):
     access_token: str
-    token_type: str
+    token_type: str = "bearer"
 
 class ConfirmAccount(BaseModel):
     token: str
@@ -37,6 +28,14 @@ class ResetPasswordConfirm(BaseModel):
 class TwoFactorVerify(BaseModel):
     email: EmailStr
     code: str
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    role: str
+    is_active: bool
+    two_factor_enabled: bool
+    model_config = ConfigDict(from_attributes=True)
 
 class UserUpdateRole(BaseModel):
     role: str

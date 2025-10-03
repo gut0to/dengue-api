@@ -10,11 +10,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     confirm_token_expire_hours: int = int(os.getenv("CONFIRM_TOKEN_EXPIRE_HOURS", "24"))
 
-    mail_username: str = os.getenv("MAIL_USERNAME")
-    mail_password: str = os.getenv("MAIL_PASSWORD")
-    mail_from: str = os.getenv("MAIL_FROM")
+    # smtp
+    mail_username: str | None = os.getenv("MAIL_USERNAME")
+    mail_password: str | None = os.getenv("MAIL_PASSWORD")
+    mail_from: str | None = os.getenv("MAIL_FROM")
     mail_server: str = os.getenv("MAIL_SERVER", "smtp.gmail.com")
     mail_port: int = int(os.getenv("MAIL_PORT", "587"))
     mail_starttls: bool = os.getenv("MAIL_STARTTLS", "True").lower() == "true"
+
+    api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 settings = Settings()
