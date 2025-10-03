@@ -1,14 +1,12 @@
-from sqlalchemy import Column, Integer, String, Boolean
-from app.db.base import Base
+from sqlmodel import SQLModel, Field
+from typing import Optional
 
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    role = Column(String, default="usuario")  
-    is_active = Column(Boolean, default=False)  
-    two_factor_enabled = Column(Boolean, default=False)
-    confirmation_token = Column(String, nullable=True)
-    reset_token = Column(String, nullable=True)
+class User(SQLModel, table=True):
+    id: int = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True)
+    hashed_password: str
+    role: str = Field(default="usuario")  
+    is_active: bool = Field(default=False)
+    two_factor_enabled: bool = Field(default=False)
+    confirmation_token: Optional[str] = Field(default=None)
+    reset_token: Optional[str] = Field(default=None)

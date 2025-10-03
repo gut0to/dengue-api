@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 class UserCreate(BaseModel):
-    emaiil: EmailStr
+    email: EmailStr
     password: str
     role: Optional[str] = "usuario"
 
@@ -15,31 +15,31 @@ class UserOut(BaseModel):
     email: str
     role: str
     is_active: bool
-    two_factor_enable: bool
+    two_factor_enabled: bool
 
     class Config:
         from_attributes = True
 
 class Token(BaseModel):
-    acess_token: str
+    access_token: str
     token_type: str
 
 class ConfirmAccount(BaseModel):
-    Token: str
+    token: str
 
 class ResetPasswordRequest(BaseModel):
-    email: str
+    email: EmailStr
 
 class ResetPasswordConfirm(BaseModel):
-    email: str
+    token: str
+    new_password: str
 
 class TwoFactorVerify(BaseModel):
     email: EmailStr
-    new_password: str
+    code: str
 
 class UserUpdateRole(BaseModel):
     role: str
 
 class UserToggle2FA(BaseModel):
-    two_factor_enable: bool
-    
+    two_factor_enabled: bool
