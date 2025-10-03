@@ -1,10 +1,9 @@
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
-from pydantic import BaseModel, EmailStr
-from pydantic import ConfigDict
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=256)
     role: Optional[str] = "usuario"
 
 class UserLogin(BaseModel):
@@ -13,7 +12,7 @@ class UserLogin(BaseModel):
 
 class Token(BaseModel):
     access_token: str
-    token_type: str = "bearer"
+    token_type: str
 
 class ConfirmAccount(BaseModel):
     token: str
@@ -23,7 +22,7 @@ class ResetPasswordRequest(BaseModel):
 
 class ResetPasswordConfirm(BaseModel):
     token: str
-    new_password: str
+    new_password: str = Field(min_length=8, max_length=256)
 
 class TwoFactorVerify(BaseModel):
     email: EmailStr
@@ -34,11 +33,4 @@ class UserOut(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
-    two_factor_enabled: bool
-    model_config = ConfigDict(from_attributes=True)
-
-class UserUpdateRole(BaseModel):
-    role: str
-
-class UserToggle2FA(BaseModel):
     two_factor_enabled: bool

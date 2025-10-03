@@ -1,115 +1,108 @@
+from datetime import timedelta, datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlmodel import Session, select
-from datetime import datetime, timedelta
+from app.db.session import get_session
+from app.models.user import User
 from app.schemas.user import (
     UserCreate, UserLogin, Token, ConfirmAccount,
     ResetPasswordRequest, ResetPasswordConfirm, TwoFactorVerify
 )
-from app.models.user import User
-from app.db.session import get_session
-from app.core.security import create_access_token, verify_password, get_password_hash, generate_token
+from app.core.security import verify_password, get_password_hash, create_access_token, generate_token
+from app.core.config import settings
 from app.utils.email import email_sender
 
 router = APIRouter()
 
-two_factor_codes = {}
+two_factor_codes: dict[str, dict] = {}
 
-@router.post("/register", status_code=201)
-async def register(user_data: UserCreate, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    existing_user = session.exec(select(User).where(User.email == user_data.email)).first()
-    if existing_user:
+@router.post("/register")
+def register(user_in: UserCreate, background: BackgroundTasks, session: Session = Depends(get_session)):
+    exists = session.exec(select(User).where(User.email == user_in.email)).first()
+    if exists:
         raise HTTPException(status_code=400, detail="E-mail já cadastrado")
-    if user_data.role not in ["usuario", "gestor"]:
-        user_data.role = "usuario"
-    
-    confirmation_token = generate_token()
-    hashed_pw = get_password_hash(user_data.password)
-    new_user = User(
-        email=user_data.email,
-        hashed_password=hashed_pw,
-        role=user_data.role,
+    user = User(
+        email=user_in.email,
+        hashed_password=get_password_hash(user_in.password),
+        role=user_in.role or "usuario",
         is_active=False,
-        confirmation_token=confirmation_token
+        two_factor_enabled=False,
+        confirmation_token=generate_token(),
+        reset_token=None,
     )
-    session.add(new_user)
+    session.add(user)
     session.commit()
-    session.refresh(new_user)
-
-    await email_sender.send_email(
-        to=user_data.email,
+    session.refresh(user)
+    token = user.confirmation_token
+    background.add_task(
+        email_sender.send_email,
+        to=user.email,
         subject="Confirme sua conta",
-        html_body=f'<p>Clique para confirmar: <a href="http://localhost:8000/api/v1/auth/confirm?token={confirmation_token}">Confirmar conta</a></p>'
+        html_body=f'<p>Confirme sua conta: <a href="http://localhost:8000/api/v1/auth/confirm?token={token}">Confirmar</a></p>',
+        text_body=f"Token de confirmação: {token}",
     )
-    return {"msg": "Conta criada. Verifique seu e-mail para confirmar."}
+    return {"msg": "Usuário criado. Verifique seu e-mail."}
 
-@router.get("/confirm")
-def confirm_account(token: str, session: Session = Depends(get_session)):
-    user = session.exec(select(User).where(User.confirmation_token == token)).first()
+@router.post("/confirm")
+def confirm(data: ConfirmAccount, session: Session = Depends(get_session)):
+    user = session.exec(select(User).where(User.confirmation_token == data.token)).first()
     if not user:
         raise HTTPException(status_code=400, detail="Token inválido")
     user.is_active = True
     user.confirmation_token = None
     session.add(user)
     session.commit()
-    return {"msg": "Conta confirmada com sucesso!"}
+    return {"msg": "Conta confirmada"}
 
-@router.post("/login")
-async def login(user: UserLogin, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    db_user = session.exec(select(User).where(User.email == user.email)).first()
-    if not db_user or not verify_password(user.password, db_user.hashed_password):
+@router.post("/login", response_model=Token)
+def login(data: UserLogin, background: BackgroundTasks, session: Session = Depends(get_session)):
+    user = session.exec(select(User).where(User.email == data.email)).first()
+    if not user or not verify_password(data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Credenciais inválidas")
-    if not db_user.is_active:
-        raise HTTPException(status_code=400, detail="Conta não confirmada")
-
-    if db_user.two_factor_enabled:
-        import secrets
-        code = secrets.token_hex(3)[:6].upper()
-        two_factor_codes[user.email] = {
-            "code": code,
-            "expires": datetime.utcnow() + timedelta(minutes=10)
-        }
-        await email_sender.send_email(
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Confirme seu e-mail")
+    if user.two_factor_enabled:
+        code = f"{generate_token()[:6]}"
+        two_factor_codes[user.email] = {"code": code, "exp": datetime.utcnow() + timedelta(minutes=10)}
+        background.add_task(
+            email_sender.send_email,
             to=user.email,
-            subject="Código de Verificação (2FA)",
-            html_body=f"<h2>Seu código: {code}</h2><p>Válido por 10 minutos.</p>"
+            subject="Código 2FA",
+            html_body=f"<p>Seu código 2FA: <b>{code}</b></p>",
+            text_body=f"Código 2FA: {code}",
         )
-        return {"msg": "Código 2FA enviado para seu e-mail"}
-
-    access_token = create_access_token(
-        data={"sub": db_user.email, "role": db_user.role},
-        expires_delta=timedelta(minutes=30)
-    )
+        return {"access_token": "", "token_type": "2fa_pending"}
+    access_token = create_access_token({"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/verify-2fa")
-def verify_2fa(data: TwoFactorVerify, session: Session = Depends(get_session)):
-    stored = two_factor_codes.get(data.email)
-    if not stored or stored["code"] != data.code or datetime.utcnow() > stored["expires"]:
+@router.post("/two-factor/verify", response_model=Token)
+def two_factor_verify(data: TwoFactorVerify, session: Session = Depends(get_session)):
+    entry = two_factor_codes.get(data.email)
+    if not entry or entry["code"] != data.code or entry["exp"] < datetime.utcnow():
         raise HTTPException(status_code=400, detail="Código inválido ou expirado")
-    db_user = session.exec(select(User).where(User.email == data.email)).first()
-    access_token = create_access_token(
-        data={"sub": db_user.email, "role": db_user.role}
-    )
-    del two_factor_codes[data.email]
+    user = session.exec(select(User).where(User.email == data.email)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    two_factor_codes.pop(data.email, None)
+    access_token = create_access_token({"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/request-reset-password")
-async def request_reset_password(request: ResetPasswordRequest, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    user = session.exec(select(User).where(User.email == request.email)).first()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    
-    token = generate_token()
-    user.reset_token = token
+@router.post("/forgot-password")
+def forgot_password(data: ResetPasswordRequest, background: BackgroundTasks, session: Session = Depends(get_session)):
+    user = session.exec(select(User).where(User.email == data.email)).first()
+    if not user:
+        return {"msg": "Se existir, enviaremos instruções de recuperação"}
+    user.reset_token = generate_token()
     session.add(user)
     session.commit()
-
-    await email_sender.send_email(
-        to=request.email,
+    token = user.reset_token
+    background.add_task(
+        email_sender.send_email,
+        to=user.email,
         subject="Redefinição de Senha",
-        html_body=f'<p>Clique para redefinir: <a href="http://localhost:8000/api/v1/auth/reset-password?token={token}">Redefinir senha</a></p>'
+        html_body=f'<p>Redefina sua senha: <a href="http://localhost:8000/api/v1/auth/reset-password?token={token}">Redefinir</a></p>',
+        text_body=f"Token de redefinição: {token}",
     )
-    return {"msg": "E-mail de recuperação enviado"}
+    return {"msg": "Se existir, enviaremos instruções de recuperação"}
 
 @router.post("/reset-password")
 def reset_password(data: ResetPasswordConfirm, session: Session = Depends(get_session)):
@@ -120,4 +113,4 @@ def reset_password(data: ResetPasswordConfirm, session: Session = Depends(get_se
     user.reset_token = None
     session.add(user)
     session.commit()
-    return {"msg": "Senha redefinida com sucesso"}
+    return {"msg": "Senha redefinida"}

@@ -1,30 +1,50 @@
+import os
+import ssl
+from email.message import EmailMessage
 import aiosmtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from app.core.config import settings
+
+MAIL_BACKEND = os.getenv("MAIL_BACKEND", "smtp").lower()
+MAIL_SERVER = os.getenv("MAIL_SERVER", "127.0.0.1")
+MAIL_PORT = int(os.getenv("MAIL_PORT", "1025"))
+MAIL_USERNAME = os.getenv("MAIL_USERNAME", "")
+MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
+MAIL_FROM = os.getenv("MAIL_FROM", "dev@local.test")
+MAIL_STARTTLS = os.getenv("MAIL_STARTTLS", "false").lower() == "true"
+MAIL_SSL = os.getenv("MAIL_SSL", "false").lower() == "true"
 
 class EmailSender:
-    def __init__(self):
-        self.username = settings.mail_username
-        self.password = settings.mail_password
-        self.from_email = settings.mail_from
-        self.smtp_server = settings.mail_server
-        self.smtp_port = settings.mail_port
-        self.use_tls = settings.mail_starttls
-
-    async def send_email(self, to: str, subject: str, html_body: str):
-        msg = MIMEMultipart("alternative")
-        msg["From"] = self.from_email
+    async def send_email(self, to: str, subject: str, html_body: str, text_body: str | None = None):
+        if MAIL_BACKEND == "console":
+            print("=== EMAIL OUT ===")
+            print(f"From: {MAIL_FROM}")
+            print(f"To: {to}")
+            print(f"Subject: {subject}")
+            if text_body:
+                print(f"Text: {text_body}")
+            print(f"HTML: {html_body}")
+            print("=== END EMAIL ===")
+            return
+        msg = EmailMessage()
+        msg["From"] = MAIL_FROM
         msg["To"] = to
         msg["Subject"] = subject
-        msg.attach(MIMEText(html_body, "html"))
-        await aiosmtplib.send(
-            message=msg,
-            hostname=self.smtp_server,
-            port=self.smtp_port,
-            username=self.username,
-            password=self.password,
-            start_tls=self.use_tls,
-        )
+        if text_body:
+            msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+        context = ssl.create_default_context()
+        kwargs = {
+            "hostname": MAIL_SERVER,
+            "port": MAIL_PORT,
+            "timeout": 30,
+            "tls_context": context,
+        }
+        if MAIL_SSL:
+            kwargs["use_tls"] = True
+        else:
+            kwargs["start_tls"] = MAIL_STARTTLS
+        if MAIL_USERNAME and MAIL_PASSWORD:
+            kwargs["username"] = MAIL_USERNAME
+            kwargs["password"] = MAIL_PASSWORD
+        await aiosmtplib.send(msg, **kwargs)
 
 email_sender = EmailSender()
